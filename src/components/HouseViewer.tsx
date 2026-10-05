@@ -1,259 +1,192 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { XIcon } from 'lucide-react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { buildHouse, disposeHouse, type HouseModel } from '../utils/houseModels';
-import type { HouseDesignId, ViewMode } from '../types/house';
+import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
+import { buildRoom } from '../utils/houseModels';
+import type { RoomDesign } from '../types/house';
 
 interface HouseViewerProps {
-  designId: HouseDesignId;
-  mode: ViewMode;
-  exploded: boolean;
+  room: RoomDesign;
+  activeFeature: string | null;
+  onSelectFeature: (id: string | null) => void;
   resetSignal: number;
 }
 
-interface ViewerState {
-  renderer: THREE.WebGLRenderer;
-  scene: THREE.Scene;
-  camera: THREE.PerspectiveCamera;
-  controls: OrbitControls;
-  ground: THREE.Mesh;
-  renderGrid: THREE.GridHelper;
-  blueprintGrid: THREE.GridHelper;
-  edgeMaterial: THREE.LineBasicMaterial;
-  blueprintMaterial: THREE.MeshBasicMaterial;
-  model: HouseModel | null;
-}
-
-const CAMERA_HOME = new THREE.Vector3(17, 11, 19);
-const TARGET_HOME = new THREE.Vector3(0, 2.8, 0);
-const RENDER_BG = '#ECEAE4';
-const BLUEPRINT_BG = '#0B2650';
-
-export function HouseViewer({ designId, mode, exploded, resetSignal }: HouseViewerProps) {
+export function HouseViewer({ room, activeFeature, onSelectFeature, resetSignal }: HouseViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const stateRef = useRef<ViewerState | null>(null);
-  const explodedRef = useRef(exploded);
+  const markerRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const resetRef = useRef<(() => void) | null>(null);
   const [unsupported, setUnsupported] = useState(false);
-
-  explodedRef.current = exploded;
+  const featureIndex = room.features.findIndex(feature => feature.id === activeFeature);
+  const feature = room.features[featureIndex];
+  const dismissFeature = () => {
+    onSelectFeature(null);
+    markerRefs.current[featureIndex]?.focus({ preventScroll: true });
+  };
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
-
+    let disposed = false;
+    let dirty = true;
+    container.dataset.materials = 'loading';
+    const invalidate = () => { dirty = true; };
     let renderer: THREE.WebGLRenderer;
     try {
-      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     } catch {
       setUnsupported(true);
       return;
     }
-
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.domElement.style.display = 'block';
-    renderer.domElement.style.width = '100%';
-    renderer.domElement.style.height = '100%';
-    renderer.domElement.style.cursor = 'grab';
-    container.appendChild(renderer.domElement);
-
+    renderer.toneMapping = THREE.AgXToneMapping;
+    renderer.toneMappingExposure = 1.05;
+    renderer.domElement.className = 'room-canvas';
+    renderer.domElement.setAttribute('aria-label', `3D cutaway of a furnished ${room.name.toLowerCase()}. Use arrow keys to rotate.`);
+    renderer.domElement.tabIndex = 0;
+    container.prepend(renderer.domElement);
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(RENDER_BG);
-    scene.fog = new THREE.Fog(RENDER_BG, 38, 75);
-
-    const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 200);
-    camera.position.copy(CAMERA_HOME);
-
+    scene.background = new THREE.Color('#e5e3df');
+    scene.environmentIntensity = 0.65;
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    let environment: THREE.WebGLRenderTarget | undefined;
+    const environmentReady = new RGBELoader().loadAsync('/materials/studio.hdr').then(texture => {
+      if (!disposed) {
+        environment = pmrem.fromEquirectangular(texture);
+        scene.environment = environment.texture;
+        scene.environmentRotation.y = 0.6;
+        invalidate();
+      }
+      texture.dispose();
+    }).catch(() => { /* Direct lights remain usable if the environment cannot load. */ });
+    const camera = new THREE.OrthographicCamera(-4, 4, 3, -3, 0.1, 60);
     const controls = new OrbitControls(camera, renderer.domElement);
-    controls.target.copy(TARGET_HOME);
+    renderer.domElement.style.touchAction = 'pan-y';
     controls.enableDamping = true;
-    controls.dampingFactor = 0.08;
     controls.enablePan = false;
     controls.enableZoom = false;
-    controls.minPolarAngle = 0.25;
-    controls.maxPolarAngle = Math.PI / 2.12;
-    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    controls.autoRotate = !reduceMotion;
-    controls.autoRotateSpeed = 0.6;
-    const stopAutoRotate = () => {
-      controls.autoRotate = false;
-      renderer.domElement.style.cursor = 'grabbing';
+    controls.addEventListener('change', invalidate);
+    controls.minPolarAngle = Math.PI / 6;
+    controls.maxPolarAngle = Math.PI / 2.65;
+    // Keep both open faces of the cutaway in view.
+    controls.minAzimuthAngle = 0.05;
+    controls.maxAzimuthAngle = Math.PI / 2 - 0.05;
+    const reset = () => {
+      camera.position.set(8, 7, 10);
+      controls.target.set(0, 0.9, 0);
+      controls.update();
     };
-    const endDrag = () => {
-      renderer.domElement.style.cursor = 'grab';
+    reset(); resetRef.current = reset;
+    const onKey = (event: KeyboardEvent) => {
+      if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home'].includes(event.key)) return;
+      event.preventDefault();
+      if (event.key === 'Home') { reset(); return; }
+      const spherical = new THREE.Spherical().setFromVector3(camera.position.clone().sub(controls.target));
+      if (event.key === 'ArrowLeft') spherical.theta -= 0.12;
+      if (event.key === 'ArrowRight') spherical.theta += 0.12;
+      if (event.key === 'ArrowUp') spherical.phi -= 0.1;
+      if (event.key === 'ArrowDown') spherical.phi += 0.1;
+      camera.position.copy(controls.target).add(new THREE.Vector3().setFromSpherical(spherical));
+      controls.update();
     };
-    controls.addEventListener('start', stopAutoRotate);
-    controls.addEventListener('end', endDrag);
-
-    scene.add(new THREE.HemisphereLight('#ffffff', '#b9b3a6', 1.15));
-    const sun = new THREE.DirectionalLight('#fff3e2', 2.3);
-    sun.position.set(12, 20, 10);
-    sun.castShadow = true;
+    renderer.domElement.addEventListener('keydown', onKey);
+    scene.add(new THREE.HemisphereLight('#eef3f5', '#a2998c', 0.75));
+    const sun = new THREE.DirectionalLight('#fff6e8', 2.8);
+    sun.position.set(1, 7, 5); sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.camera.left = -16;
-    sun.shadow.camera.right = 16;
-    sun.shadow.camera.top = 16;
-    sun.shadow.camera.bottom = -16;
-    sun.shadow.camera.near = 1;
-    sun.shadow.camera.far = 60;
-    sun.shadow.bias = -0.0005;
+    Object.assign(sun.shadow.camera, { left: -6, right: 6, top: 6, bottom: -6, near: 0.5, far: 30 });
+    sun.shadow.normalBias = 0.025; sun.shadow.bias = -0.0001;
+    sun.shadow.radius = 4;
     scene.add(sun);
-
-    const ground = new THREE.Mesh(
-      new THREE.CircleGeometry(40, 64),
-      new THREE.MeshStandardMaterial({ color: '#E2DFD7', roughness: 1 })
-    );
-    ground.rotation.x = -Math.PI / 2;
-    ground.receiveShadow = true;
-    scene.add(ground);
-
-    const renderGrid = new THREE.GridHelper(60, 60, '#CFCBC0', '#D9D6CD');
-    renderGrid.position.y = 0.01;
-    scene.add(renderGrid);
-
-    const blueprintGrid = new THREE.GridHelper(60, 60, '#4673BA', '#1C437F');
-    blueprintGrid.visible = false;
-    scene.add(blueprintGrid);
-
-    const state: ViewerState = {
-      renderer,
-      scene,
-      camera,
-      controls,
-      ground,
-      renderGrid,
-      blueprintGrid,
-      edgeMaterial: new THREE.LineBasicMaterial({ color: '#D6E6FF' }),
-      blueprintMaterial: new THREE.MeshBasicMaterial({
-        color: '#2A62B5',
-        transparent: true,
-        opacity: 0.16,
-        depthWrite: false,
-        side: THREE.DoubleSide
-      }),
-      model: null
-    };
-    stateRef.current = state;
-
+    const fill = new THREE.DirectionalLight('#e2ecff', 0.65);
+    fill.position.set(-3, 4, -2); scene.add(fill);
+    const model = buildRoom(room); scene.add(model.root);
+    Promise.all([model.ready, environmentReady]).then(() => {
+      if (!disposed) { container.dataset.materials = 'ready'; invalidate(); }
+    });
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshStandardMaterial({ color: '#dedcd6', roughness: 0.96 }));
+    ground.rotation.x = -Math.PI / 2; ground.position.y = -0.16; ground.receiveShadow = true; scene.add(ground);
     const resize = () => {
-      const { clientWidth, clientHeight } = container;
-      if (!clientWidth || !clientHeight) return;
-      renderer.setSize(clientWidth, clientHeight, false);
-      camera.aspect = clientWidth / clientHeight;
-      camera.updateProjectionMatrix();
+      const width = container.clientWidth, height = container.clientHeight;
+      if (!width || !height) return;
+      const aspect = width / height;
+      const halfHeight = Math.max(3.05, (room.width * 0.73 + 0.5) / aspect);
+      camera.left = -halfHeight * aspect; camera.right = halfHeight * aspect;
+      camera.top = halfHeight; camera.bottom = -halfHeight;
+      camera.updateProjectionMatrix(); renderer.setSize(width, height, false);
+      invalidate();
     };
     resize();
-    const resizeObserver = new ResizeObserver(resize);
-    resizeObserver.observe(container);
-
+    const observer = new ResizeObserver(resize); observer.observe(container);
     let visible = true;
-    const intersectionObserver = new IntersectionObserver(([entry]) => {
-      visible = entry.isIntersecting;
-    });
-    intersectionObserver.observe(container);
-
+    const intersection = new IntersectionObserver(([entry]) => { visible = entry.isIntersecting; });
+    intersection.observe(container);
+    const points = room.features.map(feature => new THREE.Vector3(...feature.position));
+    const projected = new THREE.Vector3();
     let frame = 0;
-    const tick = () => {
-      frame = requestAnimationFrame(tick);
-      if (!visible) return;
-      const model = state.model;
-      if (model) {
-        model.levels.forEach((level) => {
-          const target = explodedRef.current ? level.explodeOffset : 0;
-          const current = level.group.position.y;
-          level.group.position.y = reduceMotion ? target : current + (target - current) * 0.14;
-        });
-      }
+    const draw = () => {
+      frame = requestAnimationFrame(draw);
+      if (!visible || document.hidden) return;
       controls.update();
+      if (!dirty) return;
       renderer.render(scene, camera);
+      dirty = false;
+      points.forEach((point, i) => {
+        const marker = markerRefs.current[i];
+        if (!marker) return;
+        projected.copy(point).project(camera);
+        marker.style.left = `${(projected.x + 1) / 2 * 100}%`;
+        marker.style.top = `${(1 - projected.y) / 2 * 100}%`;
+        marker.style.visibility = projected.z < 1 ? 'visible' : 'hidden';
+      });
     };
-    tick();
-
+    draw();
+    const contextLost = (event: Event) => { event.preventDefault(); setUnsupported(true); };
+    renderer.domElement.addEventListener('webglcontextlost', contextLost);
     return () => {
-      cancelAnimationFrame(frame);
-      resizeObserver.disconnect();
-      intersectionObserver.disconnect();
-      controls.removeEventListener('start', stopAutoRotate);
-      controls.removeEventListener('end', endDrag);
-      controls.dispose();
-      if (state.model) disposeHouse(state.model);
-      ground.geometry.dispose();
-      (ground.material as THREE.Material).dispose();
-      renderGrid.dispose();
-      blueprintGrid.dispose();
-      state.edgeMaterial.dispose();
-      state.blueprintMaterial.dispose();
-      renderer.dispose();
-      if (renderer.domElement.parentElement === container) container.removeChild(renderer.domElement);
-      stateRef.current = null;
+      disposed = true;
+      cancelAnimationFrame(frame); observer.disconnect(); intersection.disconnect();
+      resetRef.current = null;
+      renderer.domElement.removeEventListener('keydown', onKey);
+      renderer.domElement.removeEventListener('webglcontextlost', contextLost);
+      controls.removeEventListener('change', invalidate);
+      controls.dispose(); model.dispose(); ground.geometry.dispose(); ground.material.dispose();
+      environment?.dispose(); pmrem.dispose();
+      sun.shadow.dispose(); renderer.dispose(); renderer.domElement.remove();
     };
-  }, []);
+  }, [room]);
 
-  useEffect(() => {
-    const state = stateRef.current;
-    if (!state) return;
-    if (state.model) {
-      state.scene.remove(state.model.root);
-      disposeHouse(state.model);
-    }
-    const model = buildHouse(designId, state.edgeMaterial);
-    if (explodedRef.current) {
-      model.levels.forEach((level) => level.group.position.y = level.explodeOffset);
-    }
-    state.scene.add(model.root);
-    state.model = model;
-  }, [designId]);
+  useEffect(() => { resetRef.current?.(); }, [resetSignal]);
 
-  useEffect(() => {
-    const state = stateRef.current;
-    if (state) applyMode(state, mode);
-  }, [mode, designId]);
-
-  useEffect(() => {
-    const state = stateRef.current;
-    if (!state || resetSignal === 0) return;
-    state.camera.position.copy(CAMERA_HOME);
-    state.controls.target.copy(TARGET_HOME);
-    state.controls.update();
-  }, [resetSignal]);
-
-  if (unsupported) {
-    return (
-      <div className="flex h-full w-full items-center justify-center bg-blueprint-deep p-8 text-center">
-        <p className="max-w-xs text-sm text-blueprint-light">
-          Your browser doesn’t support 3D previews. Request a quote and we’ll send full drawings for this design.
-        </p>
-      </div>);
-
-  }
-
-  return (
-    <div
-      ref={containerRef}
-      className="h-full w-full touch-none"
-      role="img"
-      aria-label="Interactive 3D model of the selected house design. Drag to rotate." />);
-
-
-}
-
-function applyMode(state: ViewerState, mode: ViewMode) {
-  const blueprint = mode === 'blueprint';
-  const bg = blueprint ? BLUEPRINT_BG : RENDER_BG;
-  state.scene.background = new THREE.Color(bg);
-  if (state.scene.fog instanceof THREE.Fog) state.scene.fog.color.set(bg);
-  state.ground.visible = !blueprint;
-  state.renderGrid.visible = !blueprint;
-  state.blueprintGrid.visible = blueprint;
-
-  state.model?.root.traverse((obj) => {
-    if (obj instanceof THREE.Mesh) {
-      obj.material = blueprint ? state.blueprintMaterial : obj.userData.baseMaterial as THREE.Material;
-      obj.castShadow = !blueprint;
-    } else if (obj instanceof THREE.LineSegments) {
-      obj.visible = blueprint;
-    }
-  });
+  return <div className="room-viewer relative flex h-full w-full flex-col pb-[288px] sm:pb-0" onKeyDown={event => {
+    if (event.key === 'Escape' && feature) { event.stopPropagation(); dismissFeature(); }
+  }}>
+    <div ref={containerRef} className="relative min-h-0 w-full flex-1">
+      {unsupported ? <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 px-6 py-16 text-center">
+        <p className="max-w-xs text-sm leading-relaxed text-muted">The 3D preview is unavailable in this browser. Select a feature here or <a href="#about" className="underline underline-offset-2">view the sample floor plan</a>.</p>
+        <div className="flex flex-wrap justify-center gap-2">
+          {room.features.map((item, i) => <button key={item.id} ref={element => { markerRefs.current[i] = element; }} type="button" onClick={() => onSelectFeature(item.id)} aria-expanded={activeFeature === item.id} className="rounded-lg border border-line bg-white px-3 py-2 text-xs">{String(i + 1).padStart(2, '0')} · {item.title}</button>)}
+        </div>
+      </div> : room.features.map((item, i) => <button
+        key={`${room.id}-${item.id}`} ref={element => { markerRefs.current[i] = element; }}
+        type="button" onClick={() => onSelectFeature(item.id)}
+        aria-label={`Explore ${item.title}`} aria-pressed={activeFeature === item.id}
+        aria-expanded={activeFeature === item.id} aria-controls={activeFeature === item.id ? 'room-feature-detail' : undefined}
+        className={`room-marker ${activeFeature === item.id ? 'is-active' : ''}`}>
+        <span>{String(i + 1).padStart(2, '0')}</span>
+      </button>)}
+    </div>
+    {feature && <div id="room-feature-detail" role="region" aria-label={`${feature.title} details`} aria-live="polite" aria-atomic="true" className="absolute inset-x-3 bottom-3 z-10 flex h-[264px] flex-col rounded-xl border border-white/80 bg-white/95 p-4 shadow-lg backdrop-blur-sm sm:inset-x-auto sm:bottom-4 sm:right-4 sm:h-[240px] sm:w-[310px] sm:p-5">
+      <div className="flex shrink-0 items-start gap-3">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent font-mono text-xs text-white">{String(featureIndex + 1).padStart(2, '0')}</span>
+        <div className="min-w-0 flex-1 pt-1"><h3 className="text-sm font-semibold text-ink">{feature.title}</h3><p className="mt-2 font-mono text-[10px] leading-relaxed text-blueprint">{feature.material}</p></div>
+        <button type="button" onClick={dismissFeature} aria-label="Close feature details" className="-mr-2 -mt-2 flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-muted hover:bg-paper hover:text-ink"><XIcon size={17} aria-hidden="true" /></button>
+      </div>
+      <p tabIndex={0} className="mt-3 min-h-0 overflow-y-auto text-sm leading-relaxed text-muted">{feature.description}</p>
+    </div>}
+  </div>;
 }

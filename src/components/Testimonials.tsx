@@ -1,4 +1,3 @@
-import React from 'react';
 import { testimonials } from '../data/testimonials';
 
 export function Testimonials() {

@@ -1,6 +1,5 @@
-import React from 'react';
 import { BlueprintGrid } from './BlueprintGrid';
-import { ElevationDrawing } from './ElevationDrawing';
+import { FloorPlan } from './FloorPlan';
 
 const facts = [
 { label: 'Established', value: '1994, Palo Alto' },
@@ -10,7 +9,7 @@ const facts = [
 
 export function About() {
   return (
-    <section id="about" className="relative overflow-hidden bg-blueprint-deep py-20 text-paper lg:py-28">
+    <section id="about" className="relative scroll-mt-16 overflow-hidden bg-blueprint-deep py-20 text-paper lg:py-28">
       <BlueprintGrid color="#1E4686" />
       <div className="relative mx-auto grid max-w-7xl items-center gap-14 px-5 lg:grid-cols-12 lg:px-8">
         <div className="lg:col-span-5">
@@ -30,8 +29,11 @@ export function About() {
             )}
           </dl>
         </div>
-        <div className="lg:col-span-7">
-          <ElevationDrawing />
+        <div className="min-w-0 lg:col-span-7">
+          <div className="h-[440px] overflow-hidden rounded-xl border border-blueprint-light/25 sm:h-[560px]">
+            <FloorPlan />
+          </div>
+          <p className="mt-3 text-xs leading-relaxed text-blueprint-light/70">Illustrative house plan. Dimensions describe sample planning zones; wall thickness and final measurements are confirmed during design.</p>
         </div>
       </div>
     </section>);

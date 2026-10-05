@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Maximize2Icon } from 'lucide-react';
 import { Lightbox } from './Lightbox';

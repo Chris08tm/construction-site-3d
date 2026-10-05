@@ -1,16 +1,20 @@
-export type HouseDesignId = 'modern' | 'farmhouse' | 'aframe';
+export type RoomId = 'kitchen' | 'bathroom' | 'bedroom';
 
-export type ViewMode = 'render' | 'blueprint';
-
-export interface HouseDesign {
-  id: HouseDesignId;
-  name: string;
-  style: string;
-  area: string;
-  beds: number;
-  baths: string;
-  startingAt: string;
+export interface RoomFeature {
+  id: string;
+  title: string;
+  material: string;
   description: string;
-  drawingNo: string;
-  levels: string[];
+  position: [number, number, number];
+}
+
+export interface RoomDesign {
+  id: RoomId;
+  name: string;
+  subtitle: string;
+  dimensions: string;
+  area: string;
+  width: number;
+  depth: number;
+  features: RoomFeature[];
 }

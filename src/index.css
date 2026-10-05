@@ -22,3 +22,45 @@ body {
     scroll-behavior: auto;
   }
 }
+
+.room-viewer {
+  background: radial-gradient(ellipse at 50% 35%, #f7f5ef 0%, #eae8e1 75%);
+}
+.room-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  touch-action: pan-y;
+}
+.room-canvas:active { cursor: grabbing; }
+.room-marker {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgb(255 255 255 / 28%);
+  border: 1px solid rgb(255 255 255 / 65%);
+  box-shadow: 0 3px 16px rgb(14 26 43 / 12%);
+  transition: background 150ms;
+}
+.room-marker span {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: #fffdf8;
+  color: #0e1a2b;
+  font: 11px 'IBM Plex Mono', monospace;
+}
+.room-marker.is-active { background: rgb(217 98 43 / 20%); border-color: #d9622b; }
+.room-marker.is-active span { background: #d9622b; color: white; }
+.room-marker:hover span { background: #0e1a2b; color: white; }
+#studio button:focus-visible, #studio a:focus-visible, .room-canvas:focus-visible {
+  outline: 3px solid #d9622b;
+  outline-offset: 3px;
+}

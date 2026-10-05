@@ -1,4 +1,3 @@
-import React from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { CheckCircle2Icon, Loader2Icon, MailIcon, MapPinIcon, PhoneIcon } from 'lucide-react';
 import { useQuoteForm, type QuoteFormValues } from '../hooks/useQuoteForm';

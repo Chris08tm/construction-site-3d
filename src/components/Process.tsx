@@ -1,4 +1,3 @@
-import React from 'react';
 import { processSteps } from '../data/process';
 
 export function Process() {
